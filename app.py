@@ -114,7 +114,7 @@ class Preprocessor():
 
 # X, Y=X_train, Y_train
     def build_train(self, X=pd.DataFrame(), Y=pd.DataFrame()):
-        train_steps = np.array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+        train_steps = np.array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13])
         predict_steps = np.array([1, 2, 3, 4, 5, 6, 7, 8]) # must start with 1
         self.predict_steps = predict_steps
         
@@ -128,19 +128,22 @@ class Preprocessor():
         X_train = pd.DataFrame(index=X.index)
         for step in train_steps:
             X_train[[f'{c} - (-{step})' for c in X.columns]] = X.shift(step)
-        # X_train.dropna(axis=0, inplace=True)
         
         Y_train = pd.DataFrame(index=Y.index)
         for step in predict_steps:
             Y_train[[f'{t} - (+{step})' for t in Y.columns]] = Y.shift(-step)
-        # Y_train.dropna(axis=0, inplace=True)
         
-        # Get index intersection
+        # Get X_test
+        X_test = X_train.iloc[[-1]] #.iloc[[pd.to_datetime(X_train.index).argmax()]]
+        
+        # Drop nan and make sure indexes match
+        X_train.dropna(axis=0, inplace=True)
+        Y_train.dropna(axis=0, inplace=True)
         index = sorted(list(set(X_train.index) & set(Y_train.index)))
         X_train = X_train.loc[index]
         Y_train = Y_train.loc[index]
         
-        return X_train, Y_train
+        return X_train, Y_train, X_test
 
     def shuffle(self, X, Y):     
         # Shuffle index
@@ -162,18 +165,18 @@ class Preprocessor():
         decompose_model = 'additive'
 
         target = Y.columns[0]
-        
-        # # Differenciate
-        # self.Y_observed = Y.copy() # for inversing
-        # Y = Y.diff(periods=1).dropna(axis=0)
-        
-        # Scale
-        self.Y_scaler = StandardScaler().fit(Y)
-        Y.loc[:, :] = self.Y_scaler.transform(Y)        
 
         # Decompose the target
         self.Y_decomposer = seasonal_decompose(Y[target], model=decompose_model, period=period)
         Y[target] = self.Y_decomposer.trend
+        
+        # Differenciate
+        self.Y_observed = Y.copy() # for inversing
+        Y = Y.diff(periods=1)#.dropna(axis=0)
+        
+        # Scale
+        self.Y_scaler = StandardScaler().fit(Y)
+        Y.loc[:, :] = self.Y_scaler.transform(Y)        
 
         self.period = period
         self.target = target
@@ -187,6 +190,13 @@ class Preprocessor():
     def inverse(self, Y=pd.DataFrame()):
         # For dataframe with multiple stretched columns and datetime index
         
+        # Inverse scaling
+        Y.loc[:, :] = self.Y_scaler.inverse_transform(Y)
+
+        # Inverse difference
+        Y.iloc[0, 0] += self.Y_observed.loc[Y.index[0]].values[0]
+        Y.iloc[0, :] = Y.iloc[0, :].cumsum(axis=0)
+
         # Inverse decomposition
         seasonal = self.Y_decomposer.seasonal
         freq = pd.to_datetime(seasonal.index).inferred_freq
@@ -205,13 +215,6 @@ class Preprocessor():
             elif self.decompose_model=='multiplicative':
                 Y.loc[yi.strftime('%Y-%m-%d'), :] *= seasonal.loc[index].values
         
-        # Inverse scaling
-        Y.loc[:, :] = self.Y_scaler.inverse_transform(Y)
-
-        # # Inverse difference
-        # Y.iloc[0, 0] += self.Y_observed.loc[Y.index[0]].values[0]
-        # Y.iloc[0, :] = Y.iloc[0, :].cumsum(axis=0)
-
         # Reshape
         Y.columns = pd.to_datetime(Y.index[0]) + delta*self.predict_steps
         Y.index = [self.target]
@@ -226,14 +229,14 @@ class Model():
         pass
                     
     def build_model(self, X_train, Y_train): # , X_val, Y_val
-        layers = 8 # 4 # 
-        units = 16 # 4 # 
+        layers = 4 # 8 # 
+        units = 4 # 24 # 
         dropout = 0.05
         
         loss = 'mse'
         optimizer = 'adam'
         
-        epochs = 20000 # 2 # 
+        epochs = 2 # 15000 # 
         batch_size = 128
         patience = 100
         
@@ -244,7 +247,6 @@ class Model():
         print('\tstart time:', starttime)
         print()
 
-        X_train, Y_train = X_train.dropna(axis=0).copy(), Y_train.dropna(axis=0).copy()
         shape = X_train.shape
         nn_model = Sequential()
         for i, u in zip(range(layers), np.linspace(units, 2, layers)):
@@ -291,23 +293,25 @@ class Model():
         print('\ttime consumption:', endtime-starttime)
         print()
         print()
+
+    def predict(self, x=None, display=False):
+        # x is dataframe
         
-    def predict(self, i=None, display=False):
-        if i is None:
+        if x is None:
             display = True
-            i = pd.to_datetime(self.X_train.index).argmax()
+            x = self.X_test.iloc[[-1]]
             
         # # Loade model
         # with open(f'nn_model.pkl', 'rb') as f:  # Python 3: open(..., 'rb')
         #     nn_model = pickle.load(f)
             
         nn_model = self.nn_model
-        testing = self.X_train.iloc[[i]].values
+        testing = x.values
         
         # Predict
-        # Y_pred = nn_model.predict(self.X_train_re[[i], :, :])
+        # Y_pred = nn_model.predict(self.X_train_re[[x], :, :])
         Y_pred = nn_model.predict(np.reshape(testing, (testing.shape[0], testing.shape[1], 1)))
-        Y_pred = pd.DataFrame(Y_pred, index=self.Y_train.index[[i]], 
+        Y_pred = pd.DataFrame(Y_pred, index=x.index[[-1]], 
                               columns=self.Y_train.columns)
         
         # Inverse
@@ -324,6 +328,7 @@ class Model():
             plt.legend(['Real Y', 'Predicted Y'])
             plt.show()
         
+        Y_pred = Y_pred.iloc[1: ]
         return Y_pred
 
 # a=self
@@ -343,9 +348,9 @@ class Model():
         X_train = training_df
         self.preprocessor = Preprocessor()
         Y_train = self.preprocessor.fit_transform(training_df[[target]])
-        X_train, Y_train = self.preprocessor.build_train(X_train, Y_train) # Build training x y
+        X_train, Y_train, X_test = self.preprocessor.build_train(X_train, Y_train) # Build training x y
         X_train, Y_train = self.preprocessor.shuffle(X_train, Y_train)
-        self.X_train, self.Y_train = X_train, Y_train 
+        self.X_train, self.Y_train, self.X_test = X_train, Y_train, X_test 
         
         # Build and fit nn_model
         self.build_model(X_train, Y_train)
@@ -354,9 +359,10 @@ class Model():
         fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(10, 5))
         training_df.index = pd.to_datetime(training_df.index)
         training_df[target].plot(ax=ax, legend=True)
-        for i in range(X_train.shape[0]):
+        for _, x in X_train.iterrows():
             # Predict
-            Y_pred = self.predict(i)
+            x = x.to_frame().transpose()
+            Y_pred = self.predict()
             ax.plot(Y_pred, label=False)
 
         plt.title('Training')
