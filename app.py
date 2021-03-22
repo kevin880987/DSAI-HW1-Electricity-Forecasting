@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from statsmodels.tsa.seasonal import seasonal_decompose
 from sklearn.preprocessing import StandardScaler
 
-from keras.models import Sequential
+from keras.models import Sequential, load_model
 from keras.layers import Dense, Dropout, GRU
 from keras.optimizers import Adam
 from keras.callbacks import EarlyStopping
@@ -133,8 +133,8 @@ class Preprocessor():
         for step in predict_steps:
             Y_train[[f'{t} - (+{step})' for t in Y.columns]] = Y.shift(-step)
         
-        # Get X_test
-        X_test = X_train.iloc[[-1]] #.iloc[[pd.to_datetime(X_train.index).argmax()]]
+        # Get X_teat
+        X_test = X_train.iloc[[-1]]
         
         # Drop nan and make sure indexes match
         X_train.dropna(axis=0, inplace=True)
@@ -167,8 +167,9 @@ class Preprocessor():
         target = Y.columns[0]
 
         # Decompose the target
-        self.Y_decomposer = seasonal_decompose(Y[target], model=decompose_model, period=period)
-        Y[target] = self.Y_decomposer.trend
+        self.Y_decomposer = seasonal_decompose(Y[target], model=decompose_model, 
+                                               period=period, extrapolate_trend='freq')
+        Y.loc[:, target] = self.Y_decomposer.trend
         
         # Differenciate
         self.Y_observed = Y.copy() # for inversing
@@ -183,8 +184,9 @@ class Preprocessor():
         self.decompose_model = decompose_model
         return Y
 
+# self=a
 # a=self
-# self=a.preprocessor
+# self=self.preprocessor
 # Y=Y_pred.copy()
 # Y=Y_train.copy()
     def inverse(self, Y=pd.DataFrame()):
@@ -199,16 +201,17 @@ class Preprocessor():
 
         # Inverse decomposition
         seasonal = self.Y_decomposer.seasonal
-        freq = pd.to_datetime(seasonal.index).inferred_freq
+        seasonal.index = pd.to_datetime(seasonal.index)
+        freq = seasonal.index.inferred_freq
         delta = pd.Timedelta(1, freq)
         seasonal_period = pd.Timedelta(self.period, freq)
         
         for yi in pd.to_datetime(Y.index):
             for ti in pd.to_datetime(seasonal.index):
-                if (yi-ti)%seasonal_period<pd.Timedelta(1, freq):
+                if (yi-ti)%seasonal_period<delta:
                     break
 
-            index = pd.to_datetime(ti + delta*self.predict_steps).strftime('%Y-%m-%d')
+            index = pd.to_datetime(ti + delta*self.predict_steps)#.strftime('%Y-%m-%d')
 
             if self.decompose_model=='additive':
                 Y.loc[yi.strftime('%Y-%m-%d'), :] += seasonal.loc[index].values
@@ -229,14 +232,14 @@ class Model():
         pass
                     
     def build_model(self, X_train, Y_train): # , X_val, Y_val
-        layers = 4 # 8 # 
-        units = 4 # 24 # 
+        layers = 8 # 4 # 
+        units = 24 # 4 # 
         dropout = 0.05
         
         loss = 'mse'
         optimizer = 'adam'
         
-        epochs = 2 # 15000 # 
+        epochs = 7000 # 2 # 
         batch_size = 128
         patience = 100
         
@@ -271,12 +274,6 @@ class Model():
                             validation_split=0.2, 
                             epochs=epochs, batch_size=batch_size, 
                             callbacks=[]) # , validation_data=(X_val, Y_val) # es, mc
-        
-        self.nn_model = nn_model
-        
-        # # Save model
-        # with open(f'nn_model.pkl', 'wb') as f:  # Python 3: open(..., 'wb')
-        #     pickle.dump(nn_model, f)
 
         # Visualize
         plt.plot(history.history['loss'])
@@ -293,19 +290,29 @@ class Model():
         print('\ttime consumption:', endtime-starttime)
         print()
         print()
+        
+        return nn_model
 
+    def load_nn_model(self):
+        # Load model
+        nn_model = load_model('nn_model.h5')
+        # with open(f'nn_model.pkl', 'rb') as f:  # Python 3: open(..., 'rb')
+        #     nn_model = pickle.load(f)
+            
+        return nn_model     
+        
     def predict(self, x=None, display=False):
         # x is dataframe
         
         if x is None:
             display = True
             x = self.X_test.iloc[[-1]]
+        
+        try:
+            nn_model = self.nn_model
+        except:
+            nn_model = self.load_nn_model()
             
-        # # Loade model
-        # with open(f'nn_model.pkl', 'rb') as f:  # Python 3: open(..., 'rb')
-        #     nn_model = pickle.load(f)
-            
-        nn_model = self.nn_model
         testing = x.values
         
         # Predict
@@ -315,7 +322,7 @@ class Model():
                               columns=self.Y_train.columns)
         
         # Inverse
-        Y_pred = self.preprocessor.inverse(Y=Y_pred)
+        Y_pred = self.preprocessor.inverse(Y_pred)
 
         if display:
             # Visualize
@@ -336,9 +343,12 @@ class Model():
 # training_df=df_training.copy()
     def train(self, training_df):
         target = '備轉容量(MW) - MODIFIED.csv'
-        freq = pd.to_datetime(training_df.index).inferred_freq
+        
+        training_df.index = pd.to_datetime(training_df.index)
+        training_df.sort_index(inplace=True)
+        freq = training_df.index.inferred_freq
         delta = pd.Timedelta(1, freq)
-
+        
         # root_fp = os.getcwd() + os.sep
         # training_df = pd.read_csv(root_fp+'training_data.csv', encoding='big5', index_col=0)
         self.training_df = training_df
@@ -347,14 +357,24 @@ class Model():
         # Preprocess data
         X_train = training_df
         self.preprocessor = Preprocessor()
+        
         Y_train = self.preprocessor.fit_transform(training_df[[target]])
         X_train, Y_train, X_test = self.preprocessor.build_train(X_train, Y_train) # Build training x y
         X_train, Y_train = self.preprocessor.shuffle(X_train, Y_train)
         self.X_train, self.Y_train, self.X_test = X_train, Y_train, X_test 
         
-        # Build and fit nn_model
-        self.build_model(X_train, Y_train)
+        # Load model
+        nn_model = self.load_nn_model()
         
+        # # Build and fit nn_model
+        # nn_model = self.build_model(X_train, Y_train)
+        
+        # Save model
+        nn_model.save('nn_model.h5')
+        self.nn_model = nn_model
+        # with open(f'nn_model.pkl', 'wb') as f:  # Python 3: open(..., 'wb')
+        #     pickle.dump(nn_model, f)
+
         # Predict train and visualize
         fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(10, 5))
         training_df.index = pd.to_datetime(training_df.index)
@@ -362,7 +382,7 @@ class Model():
         for _, x in X_train.iterrows():
             # Predict
             x = x.to_frame().transpose()
-            Y_pred = self.predict()
+            Y_pred = self.predict(x)
             ax.plot(Y_pred, label=False)
 
         plt.title('Training')
