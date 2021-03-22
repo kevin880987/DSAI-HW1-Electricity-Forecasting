@@ -11,18 +11,20 @@ import pandas as pd
 import os
 
 from datetime import timedelta
-
+from sklearn.preprocessing import OneHotEncoder
 
 def read_file():
     start_date = pd.to_datetime('2020-01-01')
     end_date = pd.to_datetime('2021-03-15')
     freq = 'D'
+    index_name = '日期'
 
     data_fp = os.getcwd() + os.sep + 'dataset' + os.sep
     file_list = os.listdir(data_fp)
     
     date = pd.date_range(start=start_date, end=end_date, freq=freq)
     data_df = pd.DataFrame(index=date)
+    data_df.index.name = index_name
     for file in file_list:
         if file.endswith('.csv'):
             try:
@@ -113,8 +115,23 @@ def read_file():
           
         df.columns = [f'{col} - {file}' for col in df.columns]
         data_df = data_df.merge(df, left_index=True, right_index=True, how='left')
-        
-    # Transform
+    
+    # # Add additional date columns and do one-hot-encoding
+
+    # data_df['Weekday'] = data_df.index.dayofweek # Monday=0, Sunday=6
+    # data_df['Month'] = data_df.index.month # January=1, December=12
+    
+    # temp = np.array(list(data_df.index.strftime('%A'))).reshape(-1, 1)
+    # weekday_ohe = OneHotEncoder().fit(temp)
+    # data_df[weekday_ohe.get_feature_names(['Weekday'])] \
+    #     = weekday_ohe.transform(temp).toarray()
+
+    # temp = np.array(list(data_df.index.month_name())).reshape(-1, 1)
+    # month_ohe = OneHotEncoder().fit(temp)
+    # data_df[month_ohe.get_feature_names(['Month'])] \
+    #     = month_ohe.fit_transform(temp).toarray()
+
+    # Transform into numercal data
     for col, ser in data_df.items():
         if np.any(ser==ser):
             if not np.issubdtype(ser, np.number):
@@ -128,135 +145,129 @@ def read_file():
     
     return data_df
 
-# df=data_df
-def amortize(df):
-    """
-    Input a day-wise sparse dataframe.
-    Return an amortized dataframe.
+# # df=data_df
+# def amortize(df):
+#     """
+#     Input a day-wise sparse dataframe.
+#     Return an amortized dataframe.
 
-    Parameters
-    ----------
-    df : dataframe
-        A sparse dataframe with date as its index.
+#     Parameters
+#     ----------
+#     df : dataframe
+#         A sparse dataframe with date as its index.
         
-        e.g.
-          DATE  Brent Oil Futures Historical Data - Price
-    2010-01-01                                        NaN
-    2010-01-02                                        NaN
-    2010-01-03                                        NaN
-    2010-01-04                                      80.12
-    2010-01-05                                      80.59
+#         e.g.
+#           DATE  Brent Oil Futures Historical Data - Price
+#     2010-01-01                                        NaN
+#     2010-01-02                                        NaN
+#     2010-01-03                                        NaN
+#     2010-01-04                                      80.12
+#     2010-01-05                                      80.59
 
-    Par : dictionary
-        Costomized parameters imported from 'parameters.py'.
+#     Par : dictionary
+#         Costomized parameters imported from 'parameters.py'.
 
-    Raises
-    ------
-    ValueError
-        Raised when the amortization contains NaN.
+#     Raises
+#     ------
+#     ValueError
+#         Raised when the amortization contains NaN.
 
-    Returns
-    -------
-    df : dataframe
-        A dataframe with no NaN and date as its index.
+#     Returns
+#     -------
+#     df : dataframe
+#         A dataframe with no NaN and date as its index.
         
-        e.g.
-          DATE  Brent Oil Futures Historical Data - Price
-    2010-01-01                                      80.12
-    2010-01-02                                      80.12
-    2010-01-03                                      80.12
-    2010-01-04                                      80.12
-    2010-01-05                                      80.59
+#         e.g.
+#           DATE  Brent Oil Futures Historical Data - Price
+#     2010-01-01                                      80.12
+#     2010-01-02                                      80.12
+#     2010-01-03                                      80.12
+#     2010-01-04                                      80.12
+#     2010-01-05                                      80.59
 
-    """
+#     """
     
-    display, verbose = True, True
-    if display:
-        feature_ctr, unab_amort_list = 0, []
+#     display, verbose = True, True
+#     if display:
+#         feature_ctr, unab_amort_list = 0, []
 
-    df = df.copy()
+#     df = df.copy()
     
-    for col in df.columns:
-        # if verbose:
-        #     print(col)
+#     for col in df.columns:
+#         # if verbose:
+#         #     print(col)
 
-        index = np.where(df[col].notnull())[0]
-        if index.size >= 2:
-            amortization = [df[col].iloc[index[0]]] * (index[0] - 0)
-            for i in range(len(index)-1):
-                amortization.extend(
-                    np.linspace(float(df[col].iloc[index[i]]), 
-                                float(df[col].iloc[index[i+1]]), 
-                                index[i+1]-index[i], endpoint=False)
-                    )    
+#         index = np.where(df[col].notnull())[0]
+#         if index.size >= 2:
+#             amortization = [df[col].iloc[index[0]]] * (index[0] - 0)
+#             for i in range(len(index)-1):
+#                 amortization.extend(
+#                     np.linspace(float(df[col].iloc[index[i]]), 
+#                                 float(df[col].iloc[index[i+1]]), 
+#                                 index[i+1]-index[i], endpoint=False)
+#                     )    
 
-                if np.any(pd.isnull(amortization)):
-                    print(i)
-                    raise ValueError(f'{col} contains NaN')
+#                 if np.any(pd.isnull(amortization)):
+#                     print(i)
+#                     raise ValueError(f'{col} contains NaN')
 
-            amortization.extend(
-                [df[col].iloc[index[i+1]]] * (len(df[col]) - 1 - index[i+1] + 1)
-                )
+#             amortization.extend(
+#                 [df[col].iloc[index[i+1]]] * (len(df[col]) - 1 - index[i+1] + 1)
+#                 )
                     
-            df[col] = amortization
+#             df[col] = amortization
             
-            # Make sure all values are converted into number
-            df[col] = df[col].astype(float)
+#             # Make sure all values are converted into number
+#             df[col] = df[col].astype(float)
             
-            if np.any(pd.isnull(df[col])):
-                print('null', col)
-                raise ValueError
+#             if np.any(pd.isnull(df[col])):
+#                 print('null', col)
+#                 raise ValueError
             
-            if display:
-                feature_ctr += 1
+#             if display:
+#                 feature_ctr += 1
             
-        elif index.size < 2:
-            if display:
-                unab_amort_list.append(col)
-            if verbose:
-                print(f'Unable to amortize {col}')
+#         elif index.size < 2:
+#             if display:
+#                 unab_amort_list.append(col)
+#             if verbose:
+#                 print(f'Unable to amortize {col}')
                 
-            df.drop(columns=col, inplace=True)
+#             df.drop(columns=col, inplace=True)
             
-    return df
+#     return df
 
         
 
-def split_train_test(data_df, target=[]):
-    train_step = np.array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
-    test_step = np.array([1, 2, 3, 4, 5, 6, 7])
-    index = data_df.index
+# def split_train_test(data_df, target=[]):
+#     train_step = np.array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+#     test_step = np.array([2, 3, 4, 5, 6, 7, 8])
+#     index = data_df.index
     
-    columns = data_df.columns    
-    training_x_df = pd.DataFrame(index=index)
-    for step in train_step:
-        training_x_df[[f'{c} - (-{step})' for c in columns]] = data_df[columns].shift(step)
-    training_x_df.dropna(axis=0, inplace=True)
+#     columns = data_df.columns    
+#     training_x_df = pd.DataFrame(index=index)
+#     for step in train_step:
+#         training_x_df[[f'{c} - (-{step})' for c in columns]] = data_df[columns].shift(step)
+#     training_x_df.dropna(axis=0, inplace=True)
     
-    training_y_df = pd.DataFrame(index=index)
-    for step in test_step:
-        training_y_df[[f'{t} - (+{step})' for t in target]] = data_df[target].shift(-step)
-    training_y_df.dropna(axis=0, inplace=True)
+#     training_y_df = pd.DataFrame(index=index)
+#     for step in test_step:
+#         training_y_df[[f'{t} - (+{step})' for t in target]] = data_df[target].shift(-step)
+#     training_y_df.dropna(axis=0, inplace=True)
     
-    index = sorted(list(set(training_x_df.index) & set(training_y_df.index)))
-    training_x_df = training_x_df.loc[index]
-    training_y_df = training_y_df.loc[index]
+#     index = sorted(list(set(training_x_df.index) & set(training_y_df.index)))
+#     training_x_df = training_x_df.loc[index]
+#     training_y_df = training_y_df.loc[index]
     
-    return training_x_df, training_y_df
+#     return training_x_df, training_y_df
 
    
 # Read file
 data_df = read_file()
 
-# Amortize
-data_df = amortize(data_df)
-
-# Split
-training_x_df, training_y_df = split_train_test(data_df, target=['備轉容量(MW) - MODIFIED.csv'])
 
 root_fp = os.getcwd() + os.sep
-training_x_df.to_csv(root_fp+'training_data.csv', encoding='big5')
-training_y_df.to_csv(root_fp+'training_data_y.csv', encoding='big5')
+data_df.to_csv(root_fp+'training_data.csv', encoding='big5')
 
 # Y for Y
 # target_df = data_df['備轉容量(MW) - 台灣電力公司_過去電力供需資訊.csv']
