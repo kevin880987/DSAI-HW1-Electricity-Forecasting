@@ -239,7 +239,7 @@ class Model():
         loss = 'mse'
         optimizer = 'adam'
         
-        epochs = 7000 # 2 # 
+        epochs = 10000 # 2 # 
         batch_size = 128
         patience = 100
         
@@ -363,11 +363,11 @@ class Model():
         X_train, Y_train = self.preprocessor.shuffle(X_train, Y_train)
         self.X_train, self.Y_train, self.X_test = X_train, Y_train, X_test 
         
-        # Load model
-        nn_model = self.load_nn_model()
+        # # Load model
+        # nn_model = self.load_nn_model()
         
-        # # Build and fit nn_model
-        # nn_model = self.build_model(X_train, Y_train)
+        # Build and fit nn_model
+        nn_model = self.build_model(X_train, Y_train)
         
         # Save model
         nn_model.save('nn_model.h5')
